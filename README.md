@@ -1,3 +1,6 @@
+![Sample Image](test_90.png)
+
+
 # Pix2Pix U-Net Generator Retrained for Denoising
 Cloned repo of pix2pix unet model for hardware adaptation. 
 
@@ -36,12 +39,16 @@ git lfs pull
 ```
 
 Everything Below is from the original repo if you're interested.
+<br><br>
 
-<img src='imgs/horse2zebra.gif' align="right" width=384>
-
-<br><br><br>
 
 # CycleGAN and pix2pix in PyTorch
+
+
+
+<img src='imgs/horse2zebra.gif' align="center" width=384>
+
+<br>
 
 **New**:  Please check out [img2img-turbo](https://github.com/GaParmar/img2img-turbo) repo that includes both pix2pix-turbo and CycleGAN-Turbo. Our new one-step image-to-image translation methods can support both paired and unpaired training and produce better results by leveraging the pre-trained StableDiffusion-Turbo model. The inference time for 512x512 image is 0.29 sec on A6000 and 0.11 sec on A100.
 
