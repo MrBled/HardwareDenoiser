@@ -45,3 +45,4 @@ test/data/legacy_serialized.pt
 #Ignore Wandb
 wandb/
 path_config.py
+!test_90.png
