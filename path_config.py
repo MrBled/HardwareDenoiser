@@ -69,9 +69,9 @@ win1_path = "./unclamped/win1_unclamped.pt"
 win2_path = "./unclamped/win2_unclamped.pt"
 
 # Experiment name
-experiment_name = "training_pix2pix_denoiser"
+experiment_name = "training_pix2pix_denoiser_hardwarechanges"
 
-test_name =  "training_pix2pix_denoiser"
+test_name =  "training_pix2pix_denoiser_hardwarechanges"
 # Output Directory
 def get_experiment_dir():
     """Generate an experiment directory with timestamp."""

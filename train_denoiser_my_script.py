@@ -1,8 +1,6 @@
 from datetime import datetime
 import os
-from random import gauss
 import torch
-# from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import save_image
 from torch.nn import functional as F
 from math import log10
@@ -20,13 +18,13 @@ from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
 from datasets import Syn_NTIRE, test_data_NTIRE
-
+from my_models import UnetGenerator_hardware
 sys.argv = [
     'train.py',  # Placeholder script name
     '--dataroot', './datasets/maps',
     '--name', 'denoiser_pix2pix',
     '--model', 'pix2pix',
-    '--gpu_ids', '0',  # Set other options here
+    '--gpu_ids', '3',  # Set other options here
     '--n_epochs', '100',
     '--n_epochs_decay', '100'
 ]
@@ -157,6 +155,7 @@ def checkpoint_test(test_loader, model, best, epoch, best_epoch, text_path,denoi
         if ave_psnr > best:
             best = ave_psnr
             best_epoch = i
+            print(f" New best ".center(50, "*"))
             checkpoint(curr_epch, train_loss, denoiser_model,
                        optimizer, path, text_path, scheduler, ave_psnr)
             
@@ -182,7 +181,7 @@ def train_gray(epoch, data_loader, device, optimizer,
         optimizer.zero_grad()
         im_loss.backward()
         optimizer.step()
-
+        scheduler.step()
     train_loss = train_loss / len(data_loader)
 
     print(f"Epoch {epoch} \tTotal loss: {train_loss:.4f}")
@@ -243,7 +242,7 @@ if __name__ == '__main__':
     test_dataset = test_data_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/test_imgs/', 100, patch_size=256) #center crop excluded atm
     
     data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=32,
+        dataset, batch_size=64,
         shuffle=True, num_workers=6,
         pin_memory=True, drop_last=True, persistent_workers=True,
         prefetch_factor=3)
@@ -257,21 +256,21 @@ if __name__ == '__main__':
 
     
     model = create_model(TrainOptions().parse())
-    denoiser_model = model.netG  # assuming the generator is the denoiser model
-    remove_batchnorm_layers(denoiser_model)
-    replace_tanh_with_relu(denoiser_model)
-    remove_dropout_layers(denoiser_model)
+    denoiser_model = UnetGenerator_hardware(3, 3, 8).to(device)
+    # denoiser_model = model.netG  # assuming the generator is the denoiser model
+    # remove_batchnorm_layers(denoiser_model)
+    # replace_tanh_with_relu(denoiser_model)
+    # remove_dropout_layers(denoiser_model)
     learning_rate = 1e-3
     
     optimizera = torch.optim.Adam(denoiser_model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=100, T_mult=2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=5000, T_mult=2)
 
 
     loss = 11
     start_time = time.perf_counter()
     best_epoch = 0
     i = 0
-    k=7.8
     best = 0
     num_epochs = 5000
 
@@ -280,7 +279,7 @@ if __name__ == '__main__':
 
         train_loss = train_gray(i, data_loader, device, optimizera,
                                 scheduler, denoiser_model)
-        if i % 20 == 0:
+        if i % 10 == 0:
             if i ==0:
                 experiment_path, current_time = path_config.get_experiment_dir()
                 os.makedirs(experiment_path, exist_ok=True)
@@ -289,8 +288,4 @@ if __name__ == '__main__':
                     txt_data.write("Training Log\n")
             best, best_epoch = checkpoint_test(test_loader, model, best, i, best_epoch, text_path, denoiser_model, 
                                                device, i, optimizera, experiment_path, train_loss, scheduler)
-        scheduler.step()
-
-# def
-# def checkpoint_test(test_loader, model, best, epoch, best_epoch, denoiser_model, device, 
-#                     curr_epch, text_path, optimizer, train_loss, scheduler):
+        # scheduler.step()
