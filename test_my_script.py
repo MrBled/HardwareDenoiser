@@ -12,7 +12,7 @@ import path_config
 from models import create_model
 from datasets import  test_data_NTIRE
 from collections import OrderedDict
-from my_models import UnetGenerator
+from my_models import UnetGenerator, UnetGenerator_hardware
 sys.argv = [
     'train.py',  # Placeholder script name
     '--dataroot', './datasets/maps',
@@ -209,10 +209,15 @@ if __name__ == '__main__':
     # replace_tanh_with_relu(denoiser_model)
     # remove_dropout_layers(denoiser_model)
     
-    denoiser_model = UnetGenerator(input_nc=3, output_nc=3, num_downs=8).to(device)
+    # denoiser_model = UnetGenerator(input_nc=3, output_nc=3, num_downs=8).to(device)
+    
+    denoiser_model = UnetGenerator_hardware(3, 3, 8).to(device)
     
     # Need to modify the dicts keys to match the new model
-    model_path = "/data/clement/models/training_pix2pix_denoiser14_56_27/model_epoch_4920.pt"
+    model_path = "/data/clement/models/training_pix2pix_denoiser14_56_27/model_epoch_4920.pt" # default model path
+    
+    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1210.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    
     model_dict = torch.load(model_path, map_location=device)
     model_dict = strip_module_prefix(model_dict['model_state_dict'])
     model_dict = remap_state_dict_keys(model_dict, denoiser_model)

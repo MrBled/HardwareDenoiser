@@ -42,7 +42,7 @@ class UnetGenerator(nn.Module):
         # Construct U-Net structure
         unet_block = UnetSkipConnectionBlock(512, 512, innermost=True)
         for _ in range(num_downs - 5):  # 5 includes innermost + 4 outer layers
-            unet_block = UnetSkipConnectionBlock(512, 512, submodule=unet_block, use_dropout=True)
+            unet_block = UnetSkipConnectionBlock(512, 512, submodule=unet_block)
         unet_block = UnetSkipConnectionBlock(256, 512, submodule=unet_block)
         unet_block = UnetSkipConnectionBlock(128, 256, submodule=unet_block)
         unet_block = UnetSkipConnectionBlock(64, 128, submodule=unet_block)

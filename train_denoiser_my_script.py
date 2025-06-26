@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from math import log10
 import math
 import time
+from collections import OrderedDict
 from torch import nn
 import torchvision
 from datasets import Syn_NTIRE
@@ -208,6 +209,35 @@ def checkpoint_noise_predictor(epoch, train_loss, model, optimizer, path, text_p
     with open(text_path, 'a') as myfile:
         myfile.write("Epoch: {} \tLoss: {}\n".format(epoch, train_loss))
 
+def strip_module_prefix(state_dict):
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            new_k = k[len("module."):]
+        else:
+            new_k = k
+        new_state_dict[new_k] = v
+    return new_state_dict
+
+def remap_state_dict_keys(old_state_dict, new_model):
+    # 1. Extract keys in order
+    old_keys = list(old_state_dict.keys())
+    new_keys = list(new_model.state_dict().keys())
+
+    if len(old_keys) != len(new_keys):
+        print(f"⚠️  Key count mismatch: {len(old_keys)} (old) vs {len(new_keys)} (new)")
+        min_len = min(len(old_keys), len(new_keys))
+        print("Only mapping the first", min_len, "keys")
+    else:
+        min_len = len(new_keys)
+
+    # 2. Map in order
+    new_state_dict = OrderedDict()
+    for i in range(min_len):
+        new_state_dict[new_keys[i]] = old_state_dict[old_keys[i]]
+
+    return new_state_dict
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -257,14 +287,25 @@ if __name__ == '__main__':
     
     model = create_model(TrainOptions().parse())
     denoiser_model = UnetGenerator_hardware(3, 3, 8).to(device)
+    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1100.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_continuetrianing10_29_55/model_epoch_3060.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    model_dict = torch.load(model_path, map_location=device)
+    model_dict = strip_module_prefix(model_dict['model_state_dict'])
+    model_dict = remap_state_dict_keys(model_dict, denoiser_model)
+    denoiser_model.load_state_dict(model_dict)
+    
     # denoiser_model = model.netG  # assuming the generator is the denoiser model
     # remove_batchnorm_layers(denoiser_model)
     # replace_tanh_with_relu(denoiser_model)
     # remove_dropout_layers(denoiser_model)
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     
     optimizera = torch.optim.Adam(denoiser_model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=5000, T_mult=2)
+    optimizer_dict = torch.load(model_path, map_location=device)
+    optimizera.load_state_dict(optimizer_dict['optimizer_state_dict'])
+    
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=5000, T_mult=2)
 
 
     loss = 11
@@ -273,12 +314,12 @@ if __name__ == '__main__':
     i = 0
     best = 0
     num_epochs = 5000
-
+    train_loss = 999.0
     print("Commencing training")
+    
     for i in range(0, num_epochs + 1):
 
-        train_loss = train_gray(i, data_loader, device, optimizera,
-                                scheduler, denoiser_model)
+        
         if i % 10 == 0:
             if i ==0:
                 experiment_path, current_time = path_config.get_experiment_dir()
@@ -288,4 +329,6 @@ if __name__ == '__main__':
                     txt_data.write("Training Log\n")
             best, best_epoch = checkpoint_test(test_loader, model, best, i, best_epoch, text_path, denoiser_model, 
                                                device, i, optimizera, experiment_path, train_loss, scheduler)
+        train_loss = train_gray(i, data_loader, device, optimizera,
+                            scheduler, denoiser_model)
         # scheduler.step()
