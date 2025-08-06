@@ -51,7 +51,7 @@ local_30_training2 = "/home/bledc/Videos/bandon2_training_30"
 # Commented-out: Alternative Model Paths
 wiener_path = "/data2/clement/models/16x16_halfprecision_thirdoverlap_refined_WINDOW00_13_44/model_epoch_1380.pt"  # nonclamp previous best benchmark
 # wiener_path  = "/data/clement/models/stage1_noisepred_4_2001_52_59/model_epoch_380.pt"  # fine-tuned model
-wiener_path = "/data/clement/models/best_nonblind_sig40_16_third/model_epoch_1440.pt"  
+wiener_path = "/data/clement/models/best_nonblind_sig40_16_third/model_epoch_1440.pt"
 # noise pred refine experiments
 # wiener_path = "/home/bledc/data_dir/clement/models/wiener_frozenstd_blin/model_epoch_4.pt" #not actually 4 # noise predictor
 # wiener_path = "/data/clement/models/tiny_pvv_net_dataloader_fixed21_19_25/model_epoch_80.pt" # pvv tiny/ medium pred noise
@@ -69,9 +69,9 @@ win1_path = "./unclamped/win1_unclamped.pt"
 win2_path = "./unclamped/win2_unclamped.pt"
 
 # Experiment name
-experiment_name = "training_pix2pix_denoiser_hardwarechanges_continuetrianing"
+experiment_name = "regular_unet_proper_data_multitest_continue"
 
-test_name =  "training_pix2pix_denoiser_hardwarechanges_continuetrianing"
+test_name =  "regular_unet_proper_data_multitest_continue"
 # Output Directory
 def get_experiment_dir():
     """Generate an experiment directory with timestamp."""

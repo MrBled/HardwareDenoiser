@@ -118,15 +118,20 @@ class UnetSkipConnectionBlock_hardware_pixelshuffle(nn.Module):
         # For PixelShuffle, we need to output 4x more channels to upscale by 2 (2x2)
         if outermost:
             upconv = nn.Conv2d(inner_nc * 2, outer_nc * 4, kernel_size=3, padding=1)
-            up = [upconv, nn.PixelShuffle(2), nn.ReLU()]  # Note: replaced ConvTranspose2d
+            #up = [upconv, nn.PixelShuffle(2), nn.ReLU()]  # Note: replaced ConvTranspose2d
+            up = [upconv, nn.ReLU(), nn.PixelShuffle(2)]  # Note: replaced ConvTranspose2d
             down = [downconv]
             model = down + [submodule] + up
         elif innermost:
             upconv = nn.Conv2d(inner_nc, outer_nc * 4, kernel_size=3, padding=1, bias=False)
-            model = [downrelu, downconv, upconv, nn.PixelShuffle(2), uprelu]
+            # model = [downrelu, downconv, upconv, nn.PixelShuffle(2), uprelu]
+            model = [downrelu, downconv, upconv, uprelu ,nn.PixelShuffle(2)]
         else:
             upconv = nn.Conv2d(inner_nc * 2, outer_nc * 4, kernel_size=3, padding=1, bias=False)
-            model = [downrelu, downconv, submodule, upconv, nn.PixelShuffle(2), uprelu]
+           # model = [downrelu, downconv, submodule, upconv, nn.PixelShuffle(2), uprelu]
+            model = [downrelu, downconv, submodule, upconv, uprelu, nn.PixelShuffle(2)]
+
+
 
         self.model = nn.Sequential(*model)
 
@@ -152,6 +157,10 @@ class UnetGenerator_hardware_pixelshuffle(nn.Module):
                                                                                                                                                                                                                                                                                                                                                                                                                                         
     def forward(self, x):                                                                                                                                                                                                                                                                                                                                                                                                               
         return self.model(x)                                                                                                                                                                                                                                                                                                                                                                                                            
+                      
+                      
+                      
+                      
                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
 if __name__ == '__main__':                                                                                                                                                                                                                                                                                                                                                                                                              
     model = UnetGenerator(input_nc=3, output_nc=3, num_downs=8)                                                                                                                                                                                                                                                                                                                                                                         

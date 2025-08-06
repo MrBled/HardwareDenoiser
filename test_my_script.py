@@ -1,6 +1,7 @@
 from ast import mod
 from datetime import datetime
 import os
+from numpy import save
 import torch
 from torchvision.utils import save_image
 from torch.nn import functional as F
@@ -12,13 +13,13 @@ import path_config
 from models import create_model
 from datasets import  test_data_NTIRE
 from collections import OrderedDict
-from my_models import UnetGenerator, UnetGenerator_hardware
+from my_models import UnetGenerator, UnetGenerator_hardware, UnetGenerator_hardware_pixelshuffle
 sys.argv = [
     'train.py',  # Placeholder script name
     '--dataroot', './datasets/maps',
     '--name', 'denoiser_pix2pix',
     '--model', 'pix2pix',
-    '--gpu_ids', '0',  # Set other options here
+    '--gpu_ids', '1',  # Set other options here
     '--n_epochs', '100',
     '--n_epochs_decay', '100'
 ]
@@ -125,6 +126,17 @@ def checkpoint(epoch, train_loss, model, optimizer, path, text_path, scheduler, 
     with open(text_path, 'a') as myfile:
         myfile.write("Epoch: {} \tLoss: {:.6f} \tPSNR: {:.2f} dB\n".format(epoch, train_loss, final_psnr))
 
+def pad_to_multiple(x, multiple=256):
+    _, _, h, w = x.size()
+    pad_h = (multiple - h % multiple) % multiple
+    pad_w = (multiple - w % multiple) % multiple
+    pad = (0, pad_w, 0, pad_h)  # pad (left, right, top, bottom)
+    return nn.functional.pad(x, pad, mode='reflect'), pad
+
+def crop_to_original(x, padding):
+    pad_left, pad_right, pad_top, pad_bottom = padding
+    _, _, h, w = x.shape
+    return x[..., pad_top:h - pad_bottom, pad_left:w - pad_right]
 
 
 def checkpoint_test(test_loader, denoiser_model,  device, 
@@ -136,10 +148,18 @@ def checkpoint_test(test_loader, denoiser_model,  device,
         for index, (noise_img, clean_img) in enumerate(test_loader):
             noise_img = noise_img.to(device)
             clean_img = clean_img.to(device)
+            # Pad images to multiple of 256
+            noise_img, pad = pad_to_multiple(noise_img, 256)
             denoised = denoiser_model(noise_img)
             denoised = torch.clamp(denoised, 0, 1)
-            combined = torch.cat((noise_img, denoised, clean_img), dim=0)
-            save_image(combined, os.path.join(path, f"test_{index}.png"))
+            # Remove padding
+            denoised = denoised[:, :, :clean_img.size(2), :clean_img.size(3)]
+            noise_img = crop_to_original(noise_img, pad)
+            # combined = torch.cat((noise_img, denoised, clean_img), dim=0)
+            # save_image(combined, os.path.join(path, f"test_{index}.png"))
+            save_image(denoised, os.path.join(path, f"{index}_denoised.png"))
+            # save_image(clean_img, os.path.join(path, f"{index}_clean.png"))
+            # save_image(noise_img, os.path.join(path, f"{index}_noise.png"))
             psnr = test_psnr(clean_img, denoised)
             print(f"Processed image {index + 1}/{len(test_loader)}, PSNR: {psnr:.2f} dB")
             ave_psnr += psnr
@@ -212,22 +232,25 @@ if __name__ == '__main__':
     # denoiser_model = UnetGenerator(input_nc=3, output_nc=3, num_downs=8).to(device)
     
     denoiser_model = UnetGenerator_hardware(3, 3, 8).to(device)
+    denoiser_model = UnetGenerator_hardware_pixelshuffle(3, 3, 4).to(device)
     
     # Need to modify the dicts keys to match the new model
-    model_path = "/data/clement/models/training_pix2pix_denoiser14_56_27/model_epoch_4920.pt" # default model path
+    # model_path = "/data/clement/models/training_pix2pix_denoiser14_56_27/model_epoch_4920.pt" # default model path
     
-    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1210.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1210.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
     
-    model_dict = torch.load(model_path, map_location=device)
-    model_dict = strip_module_prefix(model_dict['model_state_dict'])
-    model_dict = remap_state_dict_keys(model_dict, denoiser_model)
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_pixelshuffle15_18_42/model_epoch_9950.pt" # pixel shuffle
+    
+    # model_dict = torch.load(model_path, map_location=device)
+    # model_dict = strip_module_prefix(model_dict['model_state_dict'])
+    # model_dict = remap_state_dict_keys(model_dict, denoiser_model)
     
     
-    denoiser_model.load_state_dict(model_dict)
-    subddir = "MyModels"
-    os.makedirs(subddir, exist_ok=True)
-    model_save_path = os.path.join(subddir, f"{experiment_name}_denoiser.pth")
-    torch.save(denoiser_model.state_dict(), model_save_path)
+    # denoiser_model.load_state_dict(model_dict)
+    # subddir = "MyModels"
+    # os.makedirs(subddir, exist_ok=True)
+    # model_save_path = os.path.join(subddir, f"{experiment_name}_denoiser.pth")
+    # torch.save(denoiser_model.state_dict(), model_save_path)
 
     
     experiment_path, current_time = path_config.get_experiment_dir()

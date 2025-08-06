@@ -18,8 +18,11 @@ import path_config
 from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
-from datasets import Syn_NTIRE, test_data_NTIRE
-from my_models import UnetGenerator_hardware
+from datasets import Syn_NTIRE, test_data_NTIRE, PairedDenoisingDataset
+from torch.utils.data import ConcatDataset
+from my_models import UnetGenerator_hardware, UnetGenerator_hardware_pixelshuffle
+from collections import defaultdict
+
 sys.argv = [
     'train.py',  # Placeholder script name
     '--dataroot', './datasets/maps',
@@ -30,6 +33,20 @@ sys.argv = [
     '--n_epochs_decay', '100'
 ]
 
+def pad_to_multiple(img_tensor, multiple=16):
+    """Pad a 4D tensor (B, C, H, W) so that H and W are divisible by `multiple`."""
+    _, _, h, w = img_tensor.shape
+    new_h = math.ceil(h / multiple) * multiple
+    new_w = math.ceil(w / multiple) * multiple
+    pad_h = new_h - h
+    pad_w = new_w - w
+    pad_top = pad_h // 2
+    pad_bottom = pad_h - pad_top
+    pad_left = pad_w // 2
+    pad_right = pad_w - pad_left
+    padding = (pad_left, pad_right, pad_top, pad_bottom)  # (left, right, top, bottom)
+
+    return torch.nn.functional.pad(img_tensor, padding, mode='reflect'), padding
 experiment_name = "Mar16_gaussian_competition_largerwienernet_64x64"
 device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
 
@@ -139,12 +156,12 @@ def checkpoint(epoch, train_loss, model, optimizer, path, text_path, scheduler, 
 
 
 
-def checkpoint_test(test_loader, model, best, epoch, best_epoch, text_path,denoiser_model, device, 
+def checkpoint_test(test_loader, model, best, epoch, best_epoch, text_path,denoiser_model, device,
                     curr_epch, optimizer, path, train_loss, scheduler):
     psnr = 0.0
     denoiser_model.eval()
     with torch.no_grad():
-        for index, (noise_img, clean_img) in enumerate(test_loader):
+        for index, (noise_img, clean_img, noise_level) in enumerate(test_loader):
             noise_img = noise_img.to(device)
             clean_img = clean_img.to(device)
             denoised = denoiser_model(noise_img)
@@ -152,16 +169,69 @@ def checkpoint_test(test_loader, model, best, epoch, best_epoch, text_path,denoi
             psnr += test_psnr(clean_img, denoised)
 
         ave_psnr = psnr / len(test_loader)
-        
+
         if ave_psnr > best:
             best = ave_psnr
             best_epoch = i
             print(f" New best ".center(50, "*"))
             checkpoint(curr_epch, train_loss, denoiser_model,
                        optimizer, path, text_path, scheduler, ave_psnr)
-            
+
         print(f"Curr PSNR: {ave_psnr: .2f} \t Best: {best: .2f}\t Best epoch: {best_epoch}\t Curr LR: {get_lr(optimizer): .6f}")
         return best, best_epoch
+
+
+def checkpoint_test_multi(test_loader, model, best, epoch, best_epoch, text_path,
+                    denoiser_model, device, curr_epch, optimizer, path,
+                    train_loss, scheduler):
+    psnr_total = 0.0
+    count_total = 0
+
+    psnr_per_noise = defaultdict(float)
+    count_per_noise = defaultdict(int)
+
+    denoiser_model.eval()
+    with torch.no_grad():
+        for index, (noisy, clean, noise_level) in enumerate(test_loader):
+            noisy = noisy.to(device)
+            clean = clean.to(device)
+            noisy, _ = pad_to_multiple(noisy, multiple=256)
+            clean, padding = pad_to_multiple(clean, multiple=256)
+
+            denoised = denoiser_model(noisy)
+            denoised = torch.clamp(denoised, 0, 1)
+
+            psnr_value = test_psnr(clean, denoised)
+            psnr_total += psnr_value
+            count_total += 1
+
+            sigma = noise_level.item()
+            psnr_per_noise[sigma] += psnr_value
+            count_per_noise[sigma] += 1
+
+    # Compute average PSNR overall
+    ave_psnr = psnr_total / count_total
+
+    # Compute per-noise PSNR averages
+    per_noise_strs = []
+    for sigma in sorted(psnr_per_noise.keys()):
+        avg_sigma_psnr = psnr_per_noise[sigma] / count_per_noise[sigma]
+        per_noise_strs.append(f"σ={int(sigma)} PSNR={avg_sigma_psnr:.2f}")
+
+    # Print summary
+    print(f"[Epoch {epoch}] Average PSNR: {ave_psnr:.2f}")
+    print(" | ".join(per_noise_strs))
+
+    # Log new best if found
+    if ave_psnr > best:
+        best = ave_psnr
+        best_epoch = epoch
+        print(f" New best ".center(50, "*"))
+        checkpoint(curr_epch, train_loss, denoiser_model,
+                   optimizer, path, text_path, scheduler, ave_psnr)
+
+    print(f"Curr PSNR: {ave_psnr:.2f} \t Best: {best:.2f} \t Best epoch: {best_epoch} \t Curr LR: {get_lr(optimizer):.6f}")
+    return best, best_epoch
 
 
 def train_gray(epoch, data_loader, device, optimizer,
@@ -267,44 +337,60 @@ if __name__ == '__main__':
     current_time = now.strftime("%H_%M_%S")
 
     dataset = Syn_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/train_imgs/', 150, patch_size=256) + Syn_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/DIV2K/', 150, patch_size=256)
+    # dataset = Syn_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/train_imgs/', 1, patch_size=256) 
     # test_dataset = test_data_NTIRE('/home/bledc/dataset/denoising_challenge/test_imgs/', 100, patch_size=256) #center crop excluded atm
 
-    test_dataset = test_data_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/test_imgs/', 100, patch_size=256) #center crop excluded atm
-    
+    # test_dataset = test_data_NTIRE('/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/denoising_challenge/test_imgs/', 100, patch_size=256) #center crop excluded atm
+    # test_dataset = PairedDenoisingDataset("/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/BSD/noise5/")
+    test_dataset = ConcatDataset([
+        PairedDenoisingDataset("/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/BSD/noise5/", noise_level=5),
+        PairedDenoisingDataset("/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/BSD/noise20/",noise_level=20),
+        PairedDenoisingDataset("/home/bledc@ad.mee.tcd.ie/data/clement/images/datasets/BSD/noise40/",noise_level=40)
+    ])
     data_loader = torch.utils.data.DataLoader(
         dataset, batch_size=64,
         shuffle=True, num_workers=6,
         pin_memory=True, drop_last=True, persistent_workers=True,
         prefetch_factor=3)
 
+
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=1,
         shuffle=False, num_workers=8,
         pin_memory=True, drop_last=False)
 
-    print(device)
 
-    
+
     model = create_model(TrainOptions().parse())
     denoiser_model = UnetGenerator_hardware(3, 3, 8).to(device)
-    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1100.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
-    model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_continuetrianing10_29_55/model_epoch_3060.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
-    model_dict = torch.load(model_path, map_location=device)
-    model_dict = strip_module_prefix(model_dict['model_state_dict'])
-    model_dict = remap_state_dict_keys(model_dict, denoiser_model)
-    denoiser_model.load_state_dict(model_dict)
+
+    # denoiser_model = UnetGenerator_hardware_pixelshuffle(3, 3, 4).to(device)
+
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges16_49_15/model_epoch_1100.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_continuetrianing10_29_55/model_epoch_3060.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_continuetrianing11_05_02/model_epoch_4920.pt" # hardware changes model path (not trained to completeion bc of scheduling issues)
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_pixelshuffle_shallow16_03_17/model_epoch_1240.pt"
+    # model_path = "/data/clement/models/training_pix2pix_denoiser_hardwarechanges_pixelshuffle15_18_42/model_epoch_9950.pt" # pixel shuffle
+
+    model_path = "/data/clement/models/regular_unet_proper_data_multitest_continue10_06_25/model_epoch_770.pt" # original model again proper dataset
     
+    model_dict = torch.load(model_path, map_location=device)
+    # model_dict = strip_module_prefix(model_dict['model_state_dict'])
+    # # model_dict = remap_state_dict_keys(model_dict, denoiser_model)
+    denoiser_model.load_state_dict(model_dict["model_state_dict"])
+
     # denoiser_model = model.netG  # assuming the generator is the denoiser model
     # remove_batchnorm_layers(denoiser_model)
     # replace_tanh_with_relu(denoiser_model)
     # remove_dropout_layers(denoiser_model)
     learning_rate = 1e-4
-    
-    optimizera = torch.optim.Adam(denoiser_model.parameters(), lr=learning_rate)
+
+    # optimizera = torch.optim.Adam(denoiser_model.parameters(), lr=learning_rate)
+    optimizera = torch.optim.AdamW(denoiser_model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=5000, T_mult=2)
     optimizer_dict = torch.load(model_path, map_location=device)
     optimizera.load_state_dict(optimizer_dict['optimizer_state_dict'])
-    
+
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizera, T_0=5000, T_mult=2)
 
 
@@ -313,13 +399,12 @@ if __name__ == '__main__':
     best_epoch = 0
     i = 0
     best = 0
-    num_epochs = 5000
+    num_epochs = 10000
     train_loss = 999.0
     print("Commencing training")
-    
+
     for i in range(0, num_epochs + 1):
 
-        
         if i % 10 == 0:
             if i ==0:
                 experiment_path, current_time = path_config.get_experiment_dir()
@@ -327,8 +412,9 @@ if __name__ == '__main__':
                 text_path = f"{experiment_path}/{current_time}.txt"
                 with open(text_path, 'w') as txt_data:
                     txt_data.write("Training Log\n")
-            best, best_epoch = checkpoint_test(test_loader, model, best, i, best_epoch, text_path, denoiser_model, 
+            best, best_epoch = checkpoint_test_multi(test_loader, model, best, i, best_epoch, text_path, denoiser_model,
                                                device, i, optimizera, experiment_path, train_loss, scheduler)
+
         train_loss = train_gray(i, data_loader, device, optimizera,
                             scheduler, denoiser_model)
         # scheduler.step()

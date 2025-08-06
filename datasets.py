@@ -920,3 +920,33 @@ class just_gaussian(Dataset):
         clean_img = hwc_to_chw(clean_img)
         # return noisy_img, clean_img, np.zeros((3, self.patch_size, self.patch_size)), np.zeros((3, self.patch_size, self.patch_size))
         return noisy_img, clean_img
+
+
+class PairedDenoisingDataset(Dataset):
+    def __init__(self, noisy_dir, noise_level, transform=None):
+        self.noisy_dir = noisy_dir
+        # self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "original")
+        self.clean_dir = os.path.join(os.path.abspath(os.path.join(noisy_dir, os.pardir)), "original")
+
+        self.image_filenames = sorted([
+            f for f in os.listdir(noisy_dir) if f.lower().endswith('.png')
+        ])
+        if not self.image_filenames:
+            raise ValueError(f"No PNG images found in: {noisy_dir}")
+
+        self.transform = transform or transforms.ToTensor()  # Default: convert to tensor
+        self.noise_level = noise_level
+
+    def __len__(self):
+        return len(self.image_filenames)
+
+    def __getitem__(self, idx):
+        filename = self.image_filenames[idx]
+        noisy_path = os.path.join(self.noisy_dir, filename)
+        clean_path = os.path.join(self.clean_dir, filename)
+        noisy_img = read_img(noisy_path)
+        clean_img = read_img(clean_path)
+        # noisy_img = Image.open(noisy_path).convert('RGB')  # BSD68 is grayscale
+        # clean_img = Image.open(clean_path).convert('RGB')
+
+        return self.transform(noisy_img), self.transform(clean_img), self.noise_level
