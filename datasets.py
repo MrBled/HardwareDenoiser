@@ -4,20 +4,24 @@ import torch
 import numpy as np
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
+from PIL import Image
 import glob
 from torch.utils.data import Dataset
 from torchvision.utils import save_image
 # from skimage import color, io
 import cv2
 
-def read_img(filename):
-    img = cv2.imread(filename)
+def read_img(filename, grayscale=False):
+    if grayscale:
+        img = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+    else:
+        img = cv2.imread(filename)
     if img is None or isinstance(img, str):
         print("invalid img")
         print(filename)
         return "None"
     if img.ndim < 3:
-        print("single dim img")
+        # print("single dim img")
         img = np.expand_dims(img, 2)
         img = img[:,:,::-1] / 255.0
     else:
@@ -398,13 +402,17 @@ class Syn_NTIRE(Dataset):
             transforms.ToTensor(),
             transforms.RandomCrop((patch_size, patch_size))
         ])
-
+        total_clean_imgs = 0
         self.clean_fns = [[] for _ in range(sample_num)]
         for folder in folders:
             clean_imgs = sorted(glob.glob(folder + '/*GT_*'))
+            total_clean_imgs += len(clean_imgs)
+            print(f"{folder}: {len(clean_imgs)} GT images")
             for i, clean_img in enumerate(clean_imgs):
                 self.clean_fns[i % sample_num].append(clean_img)
+        print(f"Total GT images found: {total_clean_imgs}")
 
+        self.grayscale = True
         # Preload images to memory
         self.data = []
         for img_list in self.clean_fns:
@@ -413,8 +421,8 @@ class Syn_NTIRE(Dataset):
                 clean_img = read_img_np(img_path)
                 noise_img = read_img_np(img_path.replace('GT_', 'NOISY_'))
             else:
-                clean_img = read_img(img_path)
-                noise_img = read_img(img_path.replace('GT_', 'NOISY_'))
+                clean_img = read_img(img_path, self.grayscale)
+                noise_img = read_img(img_path.replace('GT_', 'NOISY_'), self.grayscale)
             self.data.append((noise_img, clean_img))
 
     def __len__(self):
@@ -433,6 +441,98 @@ class Syn_NTIRE(Dataset):
         noise_img = self.transforms(noise_img)
 
         return noise_img, clean_img
+
+
+def _imread_uint8_CHW(path, mode="L"):
+    img = Image.open(path)
+    t = TF.pil_to_tensor(img)  # uint8, CxHxW, writable
+    return t.contiguous()
+
+class Syn_NTIRE_improved(Dataset):
+    # def __init__(self, root_dir, sample_num, patch_size=256, rgb_mode="RGB", augment=True, draw_with_replacement=False):?
+    def __init__(self, root_dir, sample_num, numpy_flag=False, patch_size=256, augment=True):
+        self.patch_size = patch_size
+        self.numpy_flag = numpy_flag
+        self.grayscale = True
+
+        folders = sorted(glob.glob(os.path.join(root_dir, '*')))
+        all_gt_imgs = []
+        for folder in folders:
+            gt_imgs = sorted(glob.glob(os.path.join(folder, '*GT_*.png')))
+            all_gt_imgs.extend(gt_imgs)
+
+        total_imgs = len(all_gt_imgs)
+
+        if sample_num > total_imgs:
+            sample_num = total_imgs
+
+        selected_gt_imgs = random.sample(all_gt_imgs, sample_num)
+
+        self.data = []
+        for img_path in selected_gt_imgs:
+            # clean_img = read_img(img_path, self.grayscale)
+            # noisy_img = read_img(img_path.replace('GT_', 'NOISY_'), self.grayscale)
+            clean_img = _imread_uint8_CHW(img_path, self.grayscale)
+            noisy_img = _imread_uint8_CHW(img_path.replace('GT_', 'NOISY_'), self.grayscale)
+            self.data.append((noisy_img, clean_img))
+
+        self.transforms = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop((patch_size, patch_size))
+        ])
+        self.augment = augment
+
+    def __len__(self):
+        return len(self.data)
+
+    def _paired_random_crop_u8(self, a_u8, b_u8, ps):
+        _, h, w = a_u8.shape
+        if h < ps or w < ps:
+            # Upscale minimally to fit patch (done in uint8 via nearest; you can switch to float+bilinear if you prefer)
+            scale = max((ps + 0.5) / h, (ps + 0.5) / w)
+            nh, nw = int(round(h * scale)), int(round(w * scale))
+            a_u8 = TF.interpolate(a_u8.unsqueeze(0).float(), size=(nh, nw), mode='bilinear', align_corners=False).to(torch.uint8).squeeze(0)
+            b_u8 = TF.interpolate(b_u8.unsqueeze(0).float(), size=(nh, nw), mode='bilinear', align_corners=False).to(torch.uint8).squeeze(0)
+            _, h, w = a_u8.shape
+        i = torch.randint(0, h - ps + 1, (1,)).item()
+        j = torch.randint(0, w - ps + 1, (1,)).item()
+        return a_u8[:, i:i+ps, j:j+ps], b_u8[:, i:i+ps, j:j+ps]
+
+    def _paired_aug_u8(self, a_u8, b_u8):
+        if torch.rand(1).item() < 0.5:
+            a_u8 = torch.flip(a_u8, dims=[2]); b_u8 = torch.flip(b_u8, dims=[2])  # horizontal
+        if torch.rand(1).item() < 0.5:
+            a_u8 = torch.flip(a_u8, dims=[1]); b_u8 = torch.flip(b_u8, dims=[1])  # vertical
+        if torch.rand(1).item() < 0.5:
+            a_u8 = a_u8.transpose(1,2); b_u8 = b_u8.transpose(1,2)                # transpose
+        return a_u8.contiguous(), b_u8.contiguous()
+
+    def __getitem__(self, idx):
+        noisy_u8, clean_u8 = self.data[idx]
+
+        noisy_u8, clean_u8 = self._paired_random_crop_u8(noisy_u8, clean_u8, self.patch_size)
+
+        if self.augment:
+            noisy_u8, clean_u8 = self._paired_aug_u8(noisy_u8, clean_u8)
+
+        noisy = noisy_u8.to(torch.float32).div_(255.0).contiguous()
+        clean = clean_u8.to(torch.float32).div_(255.0).contiguous()
+
+        return noisy, clean
+
+    # def __getitem__(self, idx):
+    #     noisy_img, clean_img = self.data[idx]
+
+    #     seed = random.randint(0, 2**31 - 1)
+    #     random.seed(seed)
+    #     torch.manual_seed(seed)
+    #     clean_img = self.transforms(clean_img)
+
+    #     random.seed(seed)
+    #     torch.manual_seed(seed)
+    #     noisy_img = self.transforms(noisy_img)
+
+    #     return noisy_img, clean_img
 
 
 class Syn_no_noisemap(Dataset):
@@ -925,8 +1025,13 @@ class just_gaussian(Dataset):
 class PairedDenoisingDataset(Dataset):
     def __init__(self, noisy_dir, noise_level, transform=None):
         self.noisy_dir = noisy_dir
+        self.grayscale = True
         # self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "original")
-        self.clean_dir = os.path.join(os.path.abspath(os.path.join(noisy_dir, os.pardir)), "original")
+        if self.grayscale:
+            self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "grayscale_noise0")
+            # self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "noise0_gray")
+        else:
+            self.clean_dir = os.path.join(os.path.abspath(os.path.join(noisy_dir, os.pardir)), "original")
 
         self.image_filenames = sorted([
             f for f in os.listdir(noisy_dir) if f.lower().endswith('.png')
@@ -937,6 +1042,7 @@ class PairedDenoisingDataset(Dataset):
         self.transform = transform or transforms.ToTensor()  # Default: convert to tensor
         self.noise_level = noise_level
 
+
     def __len__(self):
         return len(self.image_filenames)
 
@@ -944,8 +1050,43 @@ class PairedDenoisingDataset(Dataset):
         filename = self.image_filenames[idx]
         noisy_path = os.path.join(self.noisy_dir, filename)
         clean_path = os.path.join(self.clean_dir, filename)
-        noisy_img = read_img(noisy_path)
-        clean_img = read_img(clean_path)
+        noisy_img = read_img(noisy_path, self.grayscale)
+        clean_img = read_img(clean_path, self.grayscale)
+        # noisy_img = Image.open(noisy_path).convert('RGB')  # BSD68 is grayscale
+        # clean_img = Image.open(clean_path).convert('RGB')
+
+        return self.transform(noisy_img), self.transform(clean_img), self.noise_level
+    
+class PairedDenoisingDataset_eval(Dataset):
+    def __init__(self, noisy_dir, noise_level, transform=None):
+        self.noisy_dir = noisy_dir
+        self.grayscale = True
+        # self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "original")
+        if self.grayscale:
+            # self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "grayscale_noise0")
+            self.clean_dir = os.path.join(os.path.dirname(noisy_dir), "noise0_gray")
+        else:
+            self.clean_dir = os.path.join(os.path.abspath(os.path.join(noisy_dir, os.pardir)), "original")
+
+        self.image_filenames = sorted([
+            f for f in os.listdir(noisy_dir) if f.lower().endswith('.png')
+        ])
+        if not self.image_filenames:
+            raise ValueError(f"No PNG images found in: {noisy_dir}")
+
+        self.transform = transform or transforms.ToTensor()  # Default: convert to tensor
+        self.noise_level = noise_level
+
+
+    def __len__(self):
+        return len(self.image_filenames)
+
+    def __getitem__(self, idx):
+        filename = self.image_filenames[idx]
+        noisy_path = os.path.join(self.noisy_dir, filename)
+        clean_path = os.path.join(self.clean_dir, filename)
+        noisy_img = read_img(noisy_path, self.grayscale)
+        clean_img = read_img(clean_path, self.grayscale)
         # noisy_img = Image.open(noisy_path).convert('RGB')  # BSD68 is grayscale
         # clean_img = Image.open(clean_path).convert('RGB')
 

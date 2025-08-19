@@ -69,9 +69,9 @@ win1_path = "./unclamped/win1_unclamped.pt"
 win2_path = "./unclamped/win2_unclamped.pt"
 
 # Experiment name
-experiment_name = "regular_unet_proper_data_multitest_continue"
+experiment_name = "hw_denoiser_grayscale_3stage_addition_resblocks"
 
-test_name =  "regular_unet_proper_data_multitest_continue"
+test_name =  "hw_denoiser_grayscale_3stage_addition_resblocks"
 # Output Directory
 def get_experiment_dir():
     """Generate an experiment directory with timestamp."""
