@@ -370,8 +370,10 @@ if __name__ == '__main__':
     # model_path = "/data/clement/models/hw_denoiser_grayscale_15_07_34/model_epoch_1580.pt"
     # model_path = "/data/clement/models/hw_denoiser_grayscale_continue21_10_58/model_epoch_9940.pt"
     # model_path = "/data/clement/models/hw_denoiser_grayscale_256-6downsample16_59_11/model_epoch_9860.pt"
-    # model_dict = torch.load(model_path, map_location=device)
-    # denoiser_model.load_state_dict(model_dict["model_state_dict"])
+    
+    model_path = "/data/clement/models/hw_denoiser_grayscale_3stage_addition_resblocks00_15_34/model_epoch_2360.pt"
+    model_dict = torch.load(model_path, map_location=device)
+    denoiser_model.load_state_dict(model_dict["model_state_dict"], strict=False)
 
     learning_rate = 1e-4
 

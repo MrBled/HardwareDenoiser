@@ -312,10 +312,13 @@ if __name__ == '__main__':
     # denoiser_model = UnetGenerator_hardware(1, 1, 6).to(device)
     denoiser_model = UnetGenerator_3stage(1,1).to(device)
     
+    
     # model_path = "/data/clement/models/hw_denoiser_grayscale_15_07_34/model_epoch_1580.pt"
     # model_path = "/data/clement/models/hw_denoiser_grayscale_continue21_10_58/model_epoch_9940.pt"
     # model_path = "/data/clement/models/hw_denoiser_grayscale_256-6downsampleA_Continue18_34_16/model_epoch_9790.pt"
-    model_path = "/data/clement/models/hw_denoiser_grayscale_3stage_addition_resblocks00_15_34/model_epoch_720.pt"
+    # model_path = "/data/clement/models/hw_denoiser_grayscale_3stage_addition_resblocks00_15_34/model_epoch_2360.pt"
+    
+    model_path = "/data/clement/models/hw_denoiser_grayscale_3stage_addition_resblocks00_15_34/model_epoch_2360.pt"
     model_dict = torch.load(model_path, map_location=device)
     denoiser_model.load_state_dict(model_dict["model_state_dict"])
 

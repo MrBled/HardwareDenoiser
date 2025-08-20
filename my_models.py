@@ -202,6 +202,32 @@ class UnetGenerator_hardware_pixelshuffle(nn.Module):
 
 
 
+# class ConvBlock3(nn.Module):
+#     def __init__(self, in_ch, out_ch, negative_slope=0.1015625):
+#         super().__init__()
+#         self.act = nn.LeakyReLU(negative_slope, inplace=True)
+
+#         self.conv1 = nn.Conv2d(in_ch,  out_ch, kernel_size=3, padding=1, bias=False)
+#         self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
+#         self.conv3 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
+
+#         # Projection for channel/shape match on the residual branch
+#         if in_ch != out_ch:
+#             self.proj = nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False)
+#         else:
+#             self.proj = nn.Identity()
+
+#     def forward(self, x):
+#         identity = self.proj(x)
+
+#         y = self.act(self.conv1(x))
+#         y = self.act(self.conv2(y))
+#         y = self.conv3(y)          # no activation before the add
+
+#         y = y + identity           # residual add
+#         y = self.act(y)            # post-residual activation
+#         return y
+
 class ConvBlock3(nn.Module):
     def __init__(self, in_ch, out_ch, negative_slope=0.1015625):
         super().__init__()
@@ -211,22 +237,36 @@ class ConvBlock3(nn.Module):
         self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
         self.conv3 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
 
-        # Projection for channel/shape match on the residual branch
         if in_ch != out_ch:
             self.proj = nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False)
         else:
             self.proj = nn.Identity()
+
+        # NEW: 1×1 conv after residual add to keep "conv -> activation" ordering
+        self.post_res_conv = nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False)
+        self._init_post_res_identity()
+
+    def _init_post_res_identity(self):
+        """Initialize 1×1 conv to identity mapping (no effect at t=0)."""
+        w = self.post_res_conv.weight
+        with torch.no_grad():
+            w.zero_()
+            oc, ic, _, _ = w.shape  # oc == ic == out_ch here
+            diag = torch.eye(oc, ic)  # shape [out_ch, out_ch]
+            w.copy_(diag.view(oc, ic, 1, 1))
 
     def forward(self, x):
         identity = self.proj(x)
 
         y = self.act(self.conv1(x))
         y = self.act(self.conv2(y))
-        y = self.conv3(y)          # no activation before the add
+        y = self.conv3(y)               
 
-        y = y + identity           # residual add
-        y = self.act(y)            # post-residual activation
+        y = y + identity               
+        y = self.post_res_conv(y)      
+        y = self.act(y)                
         return y
+
 
 
 
